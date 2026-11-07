@@ -1,0 +1,56 @@
+# .github/workflows/main.yml
+name: Build VideoStarTool dylib
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build dylib (Theos)
+    # Theos needs macOS with Xcode for the iOS toolchain.
+    # If the newest runner image breaks the build, pin a version such as macos-15.
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install ldid
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: brew install ldid
+
+      - name: Install Theos and iOS SDKs
+        run: |
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
+          rm -rf "$HOME/theos/sdks"
+          git clone --depth 1 https://github.com/theos/sdks.git "$HOME/theos/sdks"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+
+      - name: Build dylib
+        run: make
+
+      - name: Collect dylib
+        run: |
+          mkdir -p artifacts
+          find .theos -name 'VideoStarTool.dylib' -type f -exec cp -v {} artifacts/ \;
+          if [ ! -f artifacts/VideoStarTool.dylib ]; then
+            echo "::error::VideoStarTool.dylib was not produced"
+            find .theos -name '*.dylib'
+            exit 1
+          fi
+          lipo -info artifacts/VideoStarTool.dylib
+          shasum -a 256 artifacts/VideoStarTool.dylib
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStarTool-dylib
+          path: artifacts/VideoStarTool.dylib
+          if-no-files-found: error
