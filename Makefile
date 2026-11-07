@@ -11,5 +11,6 @@ TWEAK_NAME = VideoStarTool
 VideoStarTool_FILES = Tweak.m
 VideoStarTool_FRAMEWORKS = UIKit Foundation AVFoundation CoreImage CoreMedia QuartzCore
 VideoStarTool_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-function
+VideoStarTool_LDFLAGS = -Wl,-headerpad_max_install_names
 
 include $(THEOS_MAKE_PATH)/tweak.mk
