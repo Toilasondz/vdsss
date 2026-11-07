@@ -18,15 +18,15 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git curl wget libxml2-utils xz-utils
+          sudo apt-get install -y build-essential git curl wget libxml2-utils
           
           # Tải và cài đặt ldid thủ công
           sudo wget -O /usr/bin/ldid https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_linux_x86_64
           sudo chmod +x /usr/bin/ldid
 
-      - name: Setup Theos & Official Linux Toolchain
+      - name: Setup Theos & Official Toolchain via Git
         run: |
-          # 1. Tải Theos cốt lõi
+          # 1. Tải Theos cốt lõi (kèm luôn toolchain chính hãng qua cơ chế submodule nếu có, hoặc clone riêng)
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
           
           # 2. Tải iOS SDK
@@ -35,21 +35,16 @@ jobs:
           mv $HOME/theos/sdks_temp/*.sdk $HOME/theos/sdks/
           rm -rf $HOME/theos/sdks_temp
 
-          # 3. Tải bộ toolchain Linux chuẩn của Theos
-          mkdir -p $HOME/theos/toolchain/linux/iphone
-          curl -L -o toolchain.tar.zst https://github.com/theos/toolchain/releases/download/llvm-16.0.6-2/linux-amd64.tar.zst || \
-          curl -L -o toolchain.tar.zst https://github.com/theos/toolchain/releases/latest/download/linux-amd64.tar.zst
-          
-          sudo apt-get install -y zstd
-          tar --use-compress-program=unzstd -xf toolchain.tar.zst -C $HOME/theos/toolchain/linux/iphone
-          rm toolchain.tar.zst
+          # 3. Clone trực tiếp toolchain Linux chính thức của Theos từ GitHub (Tránh hoàn toàn lỗi file nén hỏng)
+          mkdir -p $HOME/theos/toolchain/linux
+          git clone --depth=1 https://github.com/theos/toolchain-linux.git $HOME/theos/toolchain/linux/iphone
 
       - name: Build Package & Sign Dylib
         run: |
           export THEOS=$HOME/theos
           make package
           
-          # Tự ký dylib bằng ldid trước khi đóng gói để tránh lỗi CodeSignature trên điện thoại
+          # Tự ký dylib bằng ldid trước khi đóng gói
           if [ -f ".theos/obj/VideoStarTool.dylib" ]; then
             ldid -S .theos/obj/VideoStarTool.dylib
           fi
