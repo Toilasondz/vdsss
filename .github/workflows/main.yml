@@ -1,56 +1,56 @@
-name: Build VideoStarTool Tweak
+# .github/workflows/main.yml
+name: Build VideoStarTool dylib
 
 on:
   push:
-    branches: [ "main", "master" ]
   pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    
+    name: Build dylib (Theos)
+    # Theos needs macOS with Xcode for the iOS toolchain.
+    # If the newest runner image breaks the build, pin a version such as macos-15.
+    runs-on: macos-latest
+    timeout-minutes: 45
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential git curl wget libxml2-utils
-          
-          # Tải và cài đặt ldid thủ công
-          sudo wget -O /usr/bin/ldid https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_linux_x86_64
-          sudo chmod +x /usr/bin/ldid
+      - name: Install ldid
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: brew install ldid
 
-      - name: Setup Theos & Official Toolchain via Git
+      - name: Install Theos and iOS SDKs
         run: |
-          # 1. Tải Theos cốt lõi (kèm luôn toolchain chính hãng qua cơ chế submodule nếu có, hoặc clone riêng)
-          git clone --recursive https://github.com/theos/theos.git $HOME/theos
-          
-          # 2. Tải iOS SDK
-          sudo mkdir -p $HOME/theos/sdks
-          git clone https://github.com/theos/sdks.git $HOME/theos/sdks_temp
-          mv $HOME/theos/sdks_temp/*.sdk $HOME/theos/sdks/
-          rm -rf $HOME/theos/sdks_temp
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
+          rm -rf "$HOME/theos/sdks"
+          git clone --depth 1 https://github.com/theos/sdks.git "$HOME/theos/sdks"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
 
-          # 3. Clone trực tiếp toolchain Linux chính thức của Theos từ GitHub (Tránh hoàn toàn lỗi file nén hỏng)
-          mkdir -p $HOME/theos/toolchain/linux
-          git clone --depth=1 https://github.com/theos/toolchain-linux.git $HOME/theos/toolchain/linux/iphone
+      - name: Build dylib
+        run: make
 
-      - name: Build Package & Sign Dylib
+      - name: Collect dylib
         run: |
-          export THEOS=$HOME/theos
-          make package
-          
-          # Tự ký dylib bằng ldid trước khi đóng gói
-          if [ -f ".theos/obj/VideoStarTool.dylib" ]; then
-            ldid -S .theos/obj/VideoStarTool.dylib
+          mkdir -p artifacts
+          find .theos -name 'VideoStarTool.dylib' -type f -exec cp -v {} artifacts/ \;
+          if [ ! -f artifacts/VideoStarTool.dylib ]; then
+            echo "::error::VideoStarTool.dylib was not produced"
+            find .theos -name '*.dylib'
+            exit 1
           fi
+          lipo -info artifacts/VideoStarTool.dylib
+          shasum -a 256 artifacts/VideoStarTool.dylib
 
-      - name: Upload Artifact
+      - name: Upload dylib
         uses: actions/upload-artifact@v4
         with:
-          name: VideoStarTool-deb
-          path: packages/*.deb
+          name: VideoStarTool-dylib
+          path: artifacts/VideoStarTool.dylib
+          if-no-files-found: error
