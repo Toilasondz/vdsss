@@ -1,19 +1,6 @@
 // ============================================================================
-//  VideoStar Tool  -  hson Edition  (V2.1 - hardened)
+//  VideoStar Tool  -  hson Edition  (V2.1 - hardened, compile fixed)
 //  Author : hson (Hoàng Văn Sơn)
-//
-//  Ghi chú: hành vi các tính năng được dựng lại dựa trên phân tích bản
-//  VideoStarTool gốc (QuangIos). Toàn bộ lớp giao diện + logic được viết lại.
-//
-//  V2.1 fixes:
-//    - Check bundleIdentifier (tránh inject nhầm app)
-//    - Watchdog timeout cho native QR import
-//    - Fallback UIImagePickerController cho feature 0
-//    - hasNextBeat fallback theo duration
-//    - Hook MultiSplitView + retry có đếm
-//    - Nút Reload hooks trong tab Dev
-//    - Fallback iOS < 13 cho key window
-//    - Hiển thị thumbnail code trong flow feature 3
 // ============================================================================
 
 #import <UIKit/UIKit.h>
@@ -42,6 +29,9 @@ typedef NS_ENUM(NSInteger, VSFeature) {
     VSFeatureBeat     = 2,
     VSFeatureMulti    = 3,
 };
+
+// Forward declarations
+void VSInstallHooksForce(void);
 
 #pragma mark - Logging
 
@@ -195,7 +185,6 @@ static BOOL VSTrigger(id target, NSString *buttonIvar, SEL sel) {
     return VSPressButton(btn);
 }
 
-// Lấy currentTime: ưu tiên selector trên target, fallback tìm AVPlayer trong subview
 static BOOL VSCurrentTime(id t, CMTime *out) {
     if (!t) return NO;
     @try {
@@ -211,7 +200,6 @@ static BOOL VSCurrentTime(id t, CMTime *out) {
                 if (CMTIME_IS_VALID(v)) { if (out) *out = v; return YES; }
             }
         }
-        // fallback: tìm AVPlayer trong view tree
         if ([t isKindOfClass:[UIView class]]) {
             NSMutableArray *stack = [NSMutableArray arrayWithObject:t];
             NSUInteger guard = 0;
@@ -232,9 +220,7 @@ static BOOL VSCurrentTime(id t, CMTime *out) {
     return NO;
 }
 
-static UIView *VSFindSubview(UIView *v, Class cls) {
-    return VSFindSubviewDepth(v, cls, 0);
-}
+// FIX: khai báo VSFindSubviewDepth TRƯỚC VSFindSubview
 static UIView *VSFindSubviewDepth(UIView *v, Class cls, NSUInteger depth) {
     if (!v || !cls || depth > 80) return nil;
     if ([v isKindOfClass:cls]) return v;
@@ -243,6 +229,9 @@ static UIView *VSFindSubviewDepth(UIView *v, Class cls, NSUInteger depth) {
         if (r) return r;
     }
     return nil;
+}
+static UIView *VSFindSubview(UIView *v, Class cls) {
+    return VSFindSubviewDepth(v, cls, 0);
 }
 
 static void VSCollectTexts(UIView *v, NSMutableArray *out) {
@@ -276,7 +265,6 @@ static UIWindow *VSAppKeyWindow(void) {
     UIApplication *app = [UIApplication sharedApplication];
     if (!app) return nil;
     UIWindow *fallback = nil;
-    // iOS 13+ scenes
     if (@available(iOS 13.0, *)) {
         for (UIScene *sc in app.connectedScenes) {
             if (![sc isKindOfClass:[UIWindowScene class]]) continue;
@@ -291,7 +279,6 @@ static UIWindow *VSAppKeyWindow(void) {
             }
         }
     }
-    // iOS 12 fallback
     if (!fallback) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -581,7 +568,6 @@ static __weak VSToolOverlay *sOverlay = nil;
     NSInteger _activeFeature;
     NSInteger _generation;
 
-    // media
     id _mediaEditor;
     BOOL _mediaPickerHandled;
     BOOL _mediaSawPresented;
@@ -590,14 +576,12 @@ static __weak VSToolOverlay *sOverlay = nil;
     NSInteger _pickedLayerIndex;
     BOOL _replaying;
 
-    // beat
     BOOL _beatRunning;
     UIView *_beatView;
     id _beatProject;
     NSUInteger _beatSceneBefore, _beatQueued, _beatGuard, _beatNoAdvance;
     CMTime _beatLastTime;
 
-    // merge
     id _mergeReviewVC;
     NSUInteger _mergeOrigLastViewed;
     id _mergeProject;
@@ -784,17 +768,25 @@ static __weak VSToolOverlay *sOverlay = nil;
     NSMutableArray *btns = [NSMutableArray array];
     for (NSInteger i = 0; i < 3; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-        UIButtonConfiguration *cfg = [UIButtonConfiguration plainButtonConfiguration];
-        cfg.image = VSSymbol(tabIcons[i], 12, UIFontWeightSemibold);
-        cfg.title = tabTitles[i];
-        cfg.imagePadding = 5;
-        cfg.contentInsets = NSDirectionalEdgeInsetsMake(0, 4, 0, 4);
-        cfg.titleTextAttributesTransformer = ^NSDictionary<NSAttributedStringKey, id> *(NSDictionary<NSAttributedStringKey, id> *attrs) {
-            NSMutableDictionary *d = [attrs mutableCopy];
-            d[NSFontAttributeName] = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-            return d;
-        };
-        b.configuration = cfg;
+        if (@available(iOS 15.0, *)) {
+            UIButtonConfiguration *cfg = [UIButtonConfiguration plainButtonConfiguration];
+            cfg.image = VSSymbol(tabIcons[i], 12, UIFontWeightSemibold);
+            cfg.title = tabTitles[i];
+            cfg.imagePadding = 5;
+            cfg.contentInsets = NSDirectionalEdgeInsetsMake(0, 4, 0, 4);
+            cfg.titleTextAttributesTransformer = ^NSDictionary<NSAttributedStringKey, id> *(NSDictionary<NSAttributedStringKey, id> *attrs) {
+                NSMutableDictionary *d = [attrs mutableCopy];
+                d[NSFontAttributeName] = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+                return d;
+            };
+            b.configuration = cfg;
+        } else {
+            [b setImage:VSSymbol(tabIcons[i], 12, UIFontWeightSemibold) forState:UIControlStateNormal];
+            [b setTitle:tabTitles[i] forState:UIControlStateNormal];
+            b.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+            b.tintColor = VS_TEXT2;
+            [b setTitleColor:VS_TEXT2 forState:UIControlStateNormal];
+        }
         b.tag = i;
         [b addTarget:self action:@selector(tabTapped:) forControlEvents:UIControlEventTouchUpInside];
         [_tabBar addSubview:b];
@@ -925,7 +917,6 @@ static __weak VSToolOverlay *sOverlay = nil;
     role.layer.cornerRadius = 12; role.clipsToBounds = YES;
     [v addSubview:role];
 
-    // nút Reload hooks
     UIButton *reload = [UIButton buttonWithType:UIButtonTypeSystem];
     reload.tag = 3100;
     [reload setTitle:@"Reload hooks" forState:UIControlStateNormal];
@@ -942,7 +933,6 @@ static __weak VSToolOverlay *sOverlay = nil;
 
 - (void)reloadHooksTapped {
     VSHaptic(UIImpactFeedbackStyleMedium);
-    extern void VSInstallHooksForce(void);
     VSInstallHooksForce();
 }
 
@@ -1020,9 +1010,15 @@ static __weak VSToolOverlay *sOverlay = nil;
 - (void)updateTabAppearance {
     for (NSInteger i = 0; i < 3; i++) {
         UIButton *b = _tabButtons[i];
-        UIButtonConfiguration *c = b.configuration;
-        c.baseForegroundColor = (i == _selectedTab) ? VS_INK : VS_TEXT2;
-        b.configuration = c;
+        if (@available(iOS 15.0, *)) {
+            UIButtonConfiguration *c = b.configuration;
+            c.baseForegroundColor = (i == _selectedTab) ? VS_INK : VS_TEXT2;
+            b.configuration = c;
+        } else {
+            UIColor *col = (i == _selectedTab) ? VS_INK : VS_TEXT2;
+            [b setTitleColor:col forState:UIControlStateNormal];
+            b.tintColor = col;
+        }
     }
 }
 
@@ -1726,19 +1722,15 @@ static __weak VSToolOverlay *sOverlay = nil;
 }
 
 - (BOOL)beatHasNextFallback {
-    // nếu không có hasNextBeat, thử dùng duration vs currentTime
     CMTime cur = kCMTimeInvalid;
     if (!VSCurrentTime(_beatView, &cur)) return YES;
-    // tìm duration qua selector bất kỳ
     id dur = VSInvoke(_beatView, @selector(duration), nil);
     if (![dur isKindOfClass:[NSValue class]] && ![dur isKindOfClass:[NSNumber class]]) {
-        // không so sánh được, cho phép tiếp tục nhưng giới hạn qua _beatGuard
         return (_beatGuard < 4000);
     }
     double d = 0;
     if ([dur isKindOfClass:[NSNumber class]]) d = [dur doubleValue];
     else {
-        // thử AVAsset
         AVAsset *asset = (AVAsset *)dur;
         if ([asset isKindOfClass:[AVAsset class]]) d = CMTimeGetSeconds(asset.duration);
     }
@@ -1881,7 +1873,6 @@ static __weak VSToolOverlay *sOverlay = nil;
         UIView *row = [[UIView alloc] initWithFrame:CGRectMake(0, i * (rh + gap), w, rh)];
         row.backgroundColor = [UIColor colorWithWhite:1 alpha:0.07];
         row.layer.cornerRadius = 16;
-        // thumbnail
         UIImageView *thumb = [[UIImageView alloc] initWithFrame:CGRectMake(8, 8, 46, 46)];
         thumb.contentMode = UIViewContentModeScaleAspectFill;
         thumb.layer.cornerRadius = 8;
@@ -1955,13 +1946,11 @@ static __weak VSToolOverlay *sOverlay = nil;
     [self qrWatchdogGen:gen idx:idx];
 }
 
-// FIX: watchdog nếu user huỷ giao diện QR gốc mà delegate không được gọi
 - (void)qrWatchdogGen:(NSInteger)gen idx:(NSUInteger)idx {
     VSAfter(1.0, ^{
         if (gen != self->_generation || self->_activeFeature != VSFeatureMulti) return;
-        if (!self->_qrProxy) return; // đã được restore
+        if (!self->_qrProxy) return;
         NSTimeInterval elapsed = CACurrentMediaTime() - self->_mergeQRStart;
-        // Sau 120s mà vẫn chưa nhận => timeout
         if (elapsed > 120) {
             VSLOG(@"QR import watchdog timeout after %.0fs (scene idx=%lu)", elapsed, (unsigned long)idx);
             [self restoreQRDelegate];
@@ -2066,7 +2055,7 @@ static __weak VSToolOverlay *sOverlay = nil;
     if (offset >= count) {
         _mergeWaitingImport = NO; _mergeImportEditor = nil;
         [self restoreQRDelegate];
-        if (_mergeReviewVC) VSPerform(_mergeReviewVC, @selector(setLastViewedSceneIndex:), [@[@(_mergeOrigLastViewed)] mutableCopy]);
+        if (_mergeReviewVC) VSPerform(_mergeReviewVC, @selector(setLastViewedSceneIndex:), @[@(_mergeOrigLastViewed)]);
         NSString *m = [NSString stringWithFormat:@"Đã áp dụng %lu code cho %lu phân cảnh.", (unsigned long)count, (unsigned long)count];
         _mediaEditor = nil;
         [self showCompletion:@"Thành công" message:m index:VSFeatureMulti];
@@ -2301,23 +2290,19 @@ static void VSInstallHooksOnce(void) {
     if (installed) sHookLastSuccess = sHookAttempts;
 }
 
-// Công khai cho nút Reload trong Dev
 void VSInstallHooksForce(void) {
-    // reset flag để cho phép cài lại nếu method có mới (sau update app)
     sHookRead = sHookSelected = sHookImported = sHookPicked = NO;
     VSInstallHooksOnce();
     VSLOG(@"force reload hooks (attempt=%lu)", (unsigned long)sHookAttempts);
 }
 
 static void VSInstallHooks(void) {
-    // Chỉ thử cài khi còn thiếu; giới hạn spam
     if (sHookRead && sHookSelected && sHookImported && sHookPicked) return;
     if (sHookAttempts > 200 && sHookAttempts - sHookLastSuccess > 60) {
         static BOOL warned = NO;
         if (!warned) { warned = YES; VSLOG(@"hook retry limit reached, some classes unavailable"); }
         return;
     }
-    // tần suất thấp: mỗi 5 lần gọi tick mới thử lại 1 lần
     static NSUInteger tick = 0;
     if ((tick++ % 5) != 0) return;
     VSInstallHooksOnce();
@@ -2378,12 +2363,10 @@ static void VSTick(void) {
 static BOOL VSIsVideoStarApp(void) {
     NSString *bid = [NSBundle mainBundle].bundleIdentifier.lowercaseString;
     if (!bid.length) return NO;
-    // Chấp nhận các bundle id phổ biến của Video Star
     NSArray *accept = @[@"videostar", @"video.star", @"com.videostar", @"com.video.star", @"com.djw."];
     for (NSString *needle in accept) {
         if ([bid containsString:needle]) return YES;
     }
-    // fallback: kiểm tra bundlePath chứa "VideoStar" hoặc có class QRCodeManager
     NSString *bundleName = [NSBundle mainBundle].infoDictionary[@"CFBundleName"] ?: @"";
     if ([VSNorm(bundleName) containsString:@"videostar"] || [VSNorm(bundleName) containsString:@"video star"]) return YES;
     if (NSClassFromString(@"QRCodeManager")) return YES;
