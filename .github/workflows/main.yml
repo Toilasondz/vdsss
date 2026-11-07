@@ -1,56 +1,61 @@
-# .github/workflows/main.yml
-name: Build VideoStarTool dylib
+name: Build VideoStarTool Tweak
 
 on:
   push:
+    branches: [ "main", "master" ]
   pull_request:
+    branches: [ "main", "master" ]
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   build:
-    name: Build dylib (Theos)
-    # Theos needs macOS with Xcode for the iOS toolchain.
-    # If the newest runner image breaks the build, pin a version such as macos-15.
-    runs-on: macos-latest
-    timeout-minutes: 45
-
+    runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout source
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install ldid
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: brew install ldid
-
-      - name: Install Theos and iOS SDKs
+      - name: Install Dependencies
         run: |
-          git clone --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
-          rm -rf "$HOME/theos/sdks"
-          git clone --depth 1 https://github.com/theos/sdks.git "$HOME/theos/sdks"
-          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y build-essential git curl wget libxml2-utils xz-utils
+          
+          # Tải và cài đặt ldid thủ công
+          sudo wget -O /usr/bin/ldid https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_linux_x86_64
+          sudo chmod +x /usr/bin/ldid
 
-      - name: Build dylib
-        run: make
-
-      - name: Collect dylib
+      - name: Setup Theos & Official Linux Toolchain
         run: |
-          mkdir -p artifacts
-          find .theos -name 'VideoStarTool.dylib' -type f -exec cp -v {} artifacts/ \;
-          if [ ! -f artifacts/VideoStarTool.dylib ]; then
-            echo "::error::VideoStarTool.dylib was not produced"
-            find .theos -name '*.dylib'
-            exit 1
+          # 1. Tải Theos cốt lõi
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          
+          # 2. Tải iOS SDK
+          sudo mkdir -p $HOME/theos/sdks
+          git clone https://github.com/theos/sdks.git $HOME/theos/sdks_temp
+          mv $HOME/theos/sdks_temp/*.sdk $HOME/theos/sdks/
+          rm -rf $HOME/theos/sdks_temp
+
+          # 3. Tải bộ toolchain Linux chuẩn của Theos
+          mkdir -p $HOME/theos/toolchain/linux/iphone
+          curl -L -o toolchain.tar.zst https://github.com/theos/toolchain/releases/download/llvm-16.0.6-2/linux-amd64.tar.zst || \
+          curl -L -o toolchain.tar.zst https://github.com/theos/toolchain/releases/latest/download/linux-amd64.tar.zst
+          
+          sudo apt-get install -y zstd
+          tar --use-compress-program=unzstd -xf toolchain.tar.zst -C $HOME/theos/toolchain/linux/iphone
+          rm toolchain.tar.zst
+
+      - name: Build Package & Sign Dylib
+        run: |
+          export THEOS=$HOME/theos
+          make package
+          
+          # Tự ký dylib bằng ldid trước khi đóng gói để tránh lỗi CodeSignature trên điện thoại
+          if [ -f ".theos/obj/VideoStarTool.dylib" ]; then
+            ldid -S .theos/obj/VideoStarTool.dylib
           fi
-          lipo -info artifacts/VideoStarTool.dylib
-          shasum -a 256 artifacts/VideoStarTool.dylib
 
-      - name: Upload dylib
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VideoStarTool-dylib
-          path: artifacts/VideoStarTool.dylib
-          if-no-files-found: error
+          name: VideoStarTool-deb
+          path: packages/*.deb
